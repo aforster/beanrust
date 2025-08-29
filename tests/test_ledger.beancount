@@ -4,24 +4,26 @@
 2024-01-01 open Assets:Depot:AMD AMD
 2024-01-01 open Income:Invest:Depot:AMD CHF
 2024-01-01 open Income:Salary CHF
-2024-01-01 open Assets:Foo CHF
-2024-01-01 open Expenses:Fees CHF
-2017-12-01 commodity CHF
+2024-01-01 open Assets:Foo CHF ; fooo
+2024-01-01 open Expenses:Fees CHF 
+2017-12-01   commodity CHF
 2017-12-01 commodity META
-2017-12-01 commodity AMD
-2024-10-03 balance Assets:Depot:Cash 0 CHF
+2017-12-01 commodity AMD  
+2024-10-03   balance Assets:Depot:Cash 0 CHF  
+*** entries: 
+
 2024-10-04 *
   Assets:Depot:Cash   2100 CHF
   Assets:Foo -500 CHF
   Income:Salary -1600 CHF
-2024-10-05 *
+2024-10-05    *
   Assets:Depot:Cash   -1500 CHF
   Assets:Depot:META      5 META {300 CHF}
 2024-10-05 *
   Assets:Depot:Cash   -100 CHF
   Assets:Depot:AMD      1 AMD {100 CHF}
 2024-10-05 price META 300 CHF
-2024-10-05 price AMD 100 CHF
+2024-10-05 price   AMD 100 CHF ; wtf
 2024-10-07 *
   Assets:Depot:Cash   -500 CHF
   Assets:Depot:META     2 META {200 CHF}
@@ -36,6 +38,7 @@
 2024-10-11 *
   Assets:Depot:Cash    -490 CHF
   Assets:Foo 
-2024-10-12 * "dividend"
+2024-10-12 * "dividend"  
   Income:Invest:Depot:AMD -100 CHF
   Assets:Depot:Cash     100 CHF
+2025-01-01 close Expenses:Fees 

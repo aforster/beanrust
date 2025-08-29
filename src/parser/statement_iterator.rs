@@ -25,7 +25,8 @@ struct LineIterator<'a> {
 impl<'a> StatementIterator<'a> {
     pub fn new(data: &'a str) -> Self {
         let new_statement_matcher = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}.*").unwrap();
-        let new_multiline_statement_matcher = regex::Regex::new(r"^.* \*.*").unwrap();
+        let new_multiline_statement_matcher =
+            regex::Regex::new(r"^\d{4}-\d{2}-\d{2} +\*.*").unwrap();
 
         StatementIterator {
             data,
@@ -137,7 +138,9 @@ impl<'a> Iterator for StatementIterator<'a> {
 }
 
 fn skip_line(line: &str) -> bool {
-    line.is_empty() || line.starts_with(';') || line.starts_with('#')
+    line.is_empty()
+        || crate::parser::is_comment_char(line.chars().next().unwrap())
+        || line.starts_with('*')
 }
 
 #[cfg(test)]
@@ -160,7 +163,9 @@ mod tests {
 2024-10-04 *
 foo bar
 2024-10-04 *
-foo bar3";
+foo bar3
+  2024-01-01 close Assets:Depot ; some comment here * * 
+;foo";
         let mut iterator = StatementIterator::new(data);
         assert_eq!(iterator.next(), Some("2017-12-01 commodity AMD"));
         assert_eq!(
@@ -180,8 +185,47 @@ foo bar3";
         assert_eq!(iterator.next(), Some("2017-12-06 commodity AMD"));
         assert_eq!(iterator.next(), Some("2024-10-04 *\nfoo bar"));
         assert_eq!(iterator.next(), Some("2024-10-04 *\nfoo bar3"));
+        assert_eq!(
+            iterator.next(),
+            Some("  2024-01-01 close Assets:Depot ; some comment here * * ")
+        );
 
         assert_eq!(iterator.next(), None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_regex_multiline() -> Result<(), String> {
+        let multi_positive = vec![
+            "2024-10-04 *",
+            "2024-10-04 * \"some text\"",
+            "2024-10-04   * \"some text\" ; comments",
+            "2024-10-04   *\"some text\"   \"some text\" #comments",
+        ];
+        let multi_negative = vec![
+            "2024-10-04 close Foo:Bar",
+            "; 2024-10-04 * ",
+            "# 2024-10-04 * ",
+            "2024-10-04 close Foo:Bar ; comments * important *",
+            "****2024-10-04 close Foo:Bar ; comments * important *",
+        ];
+        let it = StatementIterator::new("");
+        for line in multi_positive {
+            assert!(
+                it.new_multiline_statement_matcher.is_match(line),
+                "line should match: `{}`",
+                line
+            );
+        }
+        for line in multi_negative {
+            assert!(
+                !it.new_multiline_statement_matcher.is_match(line),
+                "line should NOT match: `{}`",
+                line
+            );
+        }
+
         Ok(())
     }
 

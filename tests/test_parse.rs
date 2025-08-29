@@ -11,6 +11,7 @@ fn parse_file() -> Result<(), String> {
     let result = parser::parse_entries_from_file(&ledger_path).map_err(|e| e.to_string())?;
     assert!(!result.is_empty());
     assert_eq!(result.open.len(), 8);
+    assert_eq!(result.close.len(), 1);
     println!("{}", result.unhandled_entries.join("\n--\n"));
     assert_eq!(result.unhandled_entries.len(), 15);
 
