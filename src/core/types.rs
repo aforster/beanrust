@@ -5,6 +5,7 @@ pub enum EntryVariant {
     Balance(Balance),
     Open(Open),
     Close(Close),
+    Commodity(Commodity),
 }
 
 impl EntryVariant {
@@ -14,6 +15,7 @@ impl EntryVariant {
             EntryVariant::Balance(t) => t.date,
             EntryVariant::Open(t) => t.date,
             EntryVariant::Close(t) => t.date,
+            EntryVariant::Commodity(c) => c.date,
         }
     }
 }
@@ -47,4 +49,9 @@ pub struct Open {
 pub struct Close {
     pub date: Date,
     pub account: String,
+}
+
+pub struct Commodity {
+    pub date: Date,
+    pub currency: String,
 }

@@ -11,6 +11,7 @@ pub struct ParsedEntries {
     pub open: Vec<Open>,
     pub balance: Vec<Balance>,
     pub close: Vec<Close>,
+    pub commodity: Vec<Commodity>,
     // temporry until impl complete
     pub unhandled_entries: Vec<String>,
 }
@@ -27,6 +28,7 @@ impl ParsedEntries {
             EntryVariant::Open(o) => self.open.push(o),
             EntryVariant::Balance(b) => self.balance.push(b),
             EntryVariant::Close(c) => self.close.push(c),
+            EntryVariant::Commodity(c) => self.commodity.push(c),
             _ => {
                 panic!("Unsupported entry type in push")
             }
@@ -48,6 +50,7 @@ impl Default for ParsedEntries {
             open: vec![],
             balance: vec![],
             close: vec![],
+            commodity: vec![],
             unhandled_entries: vec![],
         }
     }
@@ -122,6 +125,7 @@ impl<'a> StatementParser<'a> {
             "open" => Ok(EntryVariant::Open(self.parse_open(date)?)),
             "close" => Ok(EntryVariant::Close(self.parse_close(date)?)),
             "balance" => Ok(EntryVariant::Balance(self.parse_balance(date)?)),
+            "commodity" => Ok(EntryVariant::Commodity(self.parse_commodity(date)?)),
             &_ => Err(self.new_parse_err(format!("Unknown command `{}` in entry", cmd))),
         }
     }
@@ -182,6 +186,23 @@ impl<'a> StatementParser<'a> {
         let account = self.parse_account(false)?.0;
 
         Ok(Close { date, account })
+    }
+
+    fn parse_commodity(&self, date: Date) -> Result<Commodity, Box<ParseError>> {
+        let commodity = self.remaining.trim();
+        if commodity.is_empty() {
+            return Err(self.new_parse_err("No commodity specified in entry".to_string()));
+        }
+        if commodity.contains(' ') {
+            return Err(self.new_parse_err(format!(
+                "unexpected remaining input in commodity parsing: `{}`",
+                commodity
+            )));
+        }
+        Ok(Commodity {
+            date,
+            currency: commodity.to_string(),
+        })
     }
 
     fn parse_balance(&self, date: Date) -> Result<Balance, Box<ParseError>> {
