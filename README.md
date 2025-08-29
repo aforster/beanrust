@@ -1,0 +1,1 @@
+This is a project for me to learn Rust. It tries to implement the [beancount](https://github.com/beancount/beancount) library/functionality. 
