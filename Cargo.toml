@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 jiff = "0.2.15"
+regex = "1.11.2"
 rust_decimal = { version = "1.37.2", features = ["macros"] }
