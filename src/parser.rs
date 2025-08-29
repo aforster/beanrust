@@ -3,6 +3,8 @@ use jiff::civil::Date;
 use std::error::Error;
 use std::{fs, path::Path, str::FromStr, vec};
 
+mod statement_iterator;
+
 pub struct ParsedEntries {
     pub open: Vec<Open>,
     pub balance: Vec<Balance>,
@@ -55,45 +57,13 @@ pub fn parse_entries_from_string(
     _cur_fpath: &Path,
 ) -> Result<ParsedEntries, Box<dyn Error>> {
     // TODO: Handle imports of other files.
+    let mut parsed_entries: ParsedEntries = ParsedEntries::default();
 
-    let new_entry_matcher = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}.*")?;
-    let new_multiline_entry_matcher = regex::Regex::new(r"^.* \*.*")?;
-    let mut parsed_entries = ParsedEntries::default();
-
-    // Split input into entries. Entries either start with a date, or some specific keyword.
-
-    let mut line_it = input.lines();
-    let mut multiline_entry = String::new();
-    loop {
-        // todo can we do this by not creating a new string for each entry but rather refer to substrings of the original input?
-        //todo check if an entry is multiline or not. if not, directly process without copy
-        let line = match line_it.next() {
-            Some(l) => l.trim(),
-            None => break,
-        };
-        if line.is_empty() || line.starts_with(';') {
-            // skip empty lines and comments
-            continue;
-        }
-        if new_entry_matcher.is_match(line) {
-            // Start of a new entry, proces last one.
-            if !multiline_entry.is_empty() {
-                parsed_entries.push_result(parse_entry(&multiline_entry));
-                multiline_entry.clear();
-            }
-            if new_multiline_entry_matcher.is_match(line) {
-                multiline_entry = line.to_string();
-            } else {
-                parsed_entries.push_result(parse_entry(line));
-            }
-        } else {
-            multiline_entry.push('\n');
-            multiline_entry += line;
-        }
-    }
-    if !multiline_entry.is_empty() {
-        parsed_entries.push_result(parse_entry(&multiline_entry));
-    }
+    statement_iterator::StatementIterator::new(&input)
+        .map(|s| parse_entry(s))
+        .for_each(|r| {
+            parsed_entries.push_result(r);
+        });
 
     Ok(parsed_entries)
 }
