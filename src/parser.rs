@@ -3,6 +3,7 @@ mod statement_iterator;
 use crate::core::types::*;
 use error::ParseError;
 use jiff::civil::Date;
+use rust_decimal::Decimal;
 use std::error::Error;
 use std::{fs, path::Path, str::FromStr, vec};
 
@@ -113,12 +114,14 @@ impl<'a> StatementParser<'a> {
             .map_err(|e| self.new_parse_err(format!("unable to parse date: {}", e)))?;
 
         let (cmd, remain) = remain
+            .trim()
             .split_once(" ")
             .ok_or(self.new_parse_err("No command in entry".to_string()))?;
         self.remaining = trim_comment_at_end(remain).trim();
         match cmd {
             "open" => Ok(EntryVariant::Open(self.parse_open(date)?)),
             "close" => Ok(EntryVariant::Close(self.parse_close(date)?)),
+            "balance" => Ok(EntryVariant::Balance(self.parse_balance(date)?)),
             &_ => Err(self.new_parse_err(format!("Unknown command `{}` in entry", cmd))),
         }
     }
@@ -179,6 +182,34 @@ impl<'a> StatementParser<'a> {
         let account = self.parse_account(false)?.0;
 
         Ok(Close { date, account })
+    }
+
+    fn parse_balance(&self, date: Date) -> Result<Balance, Box<ParseError>> {
+        let (account, remaining) = self.parse_account(true)?;
+        let (amnt_string, currency) = remaining
+            .ok_or(self.new_parse_err("No amount in balance entry".to_string()))?
+            .trim()
+            .split_once(' ')
+            .ok_or(self.new_parse_err("no currency in balance entry".to_string()))?;
+
+        let number = Decimal::from_str_exact(amnt_string).map_err(|e| {
+            self.new_parse_err(format!(
+                "unable to parse amount number in balance entry: {}",
+                e
+            ))
+        })?;
+        let currency = currency.trim();
+        if currency.contains(' ') {
+            return Err(self.new_parse_err(format!(
+                "unexpected remaining input in currency parsing: `{}`",
+                currency
+            )));
+        }
+        Ok(Balance {
+            date,
+            account,
+            amount: Amount::new(number, currency.to_string()),
+        })
     }
 }
 
@@ -274,6 +305,69 @@ mod tests {
 
         assert_eq!(entry.date, date(2022, 1, 1));
         assert_eq!(entry.account, "Assets:Depot:META");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_balance() -> Result<(), String> {
+        let entry = StatementParser {
+            statement: "",
+            remaining: "Assets:Depot:META 5 CHF ",
+        }
+        .parse_balance(date(2022, 1, 1))
+        .unwrap();
+
+        assert_eq!(entry.date, date(2022, 1, 1));
+        assert_eq!(entry.account, "Assets:Depot:META");
+        assert_eq!(entry.amount.number, Decimal::new(5, 0));
+        assert_eq!(entry.amount.currency, "CHF");
+
+        let entry = StatementParser {
+            statement: "",
+            remaining: "Assets:Depot -5.123456 CHF",
+        }
+        .parse_balance(date(2022, 1, 1))
+        .unwrap();
+
+        assert_eq!(entry.date, date(2022, 1, 1));
+        assert_eq!(entry.account, "Assets:Depot");
+        assert_eq!(entry.amount.number, Decimal::new(-5123456, 6));
+        assert_eq!(entry.amount.currency, "CHF");
+
+        let entry = StatementParser {
+            statement: "",
+            remaining: "Assets:Depot  ",
+        }
+        .parse_balance(date(2022, 1, 1));
+        assert!(entry.is_err());
+
+        let entry = StatementParser {
+            statement: "",
+            remaining: "Assets:Depot 3 ",
+        }
+        .parse_balance(date(2022, 1, 1));
+        assert!(entry.is_err());
+
+        let entry = StatementParser {
+            statement: "",
+            remaining: "Assets:Depot usd chf ",
+        }
+        .parse_balance(date(2022, 1, 1));
+        assert!(entry.is_err());
+
+        let entry = StatementParser::new("2024-10-03   balance Assets:Depot:Cash 0 CHF")
+            .parse_entry()
+            .unwrap();
+        let entry = match entry {
+            EntryVariant::Balance(o) => Ok(o),
+            _ => Err("Incorrect return"),
+        }
+        .unwrap();
+        assert_eq!(entry.date, date(2024, 10, 3));
+        assert_eq!(entry.account, "Assets:Depot:Cash");
+        assert_eq!(entry.amount.number, Decimal::new(0, 0));
+        assert_eq!(entry.amount.currency, "CHF");
 
         Ok(())
     }
