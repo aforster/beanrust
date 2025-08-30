@@ -14,8 +14,9 @@ fn parse_file() -> Result<(), String> {
     assert_eq!(result.close.len(), 1);
     assert_eq!(result.balance.len(), 1);
     assert_eq!(result.commodity.len(), 3);
+    assert_eq!(result.price.len(), 4);
     println!("{}", result.unhandled_entries.join("\n--\n"));
-    assert_eq!(result.unhandled_entries.len(), 11);
+    assert_eq!(result.unhandled_entries.len(), 7);
 
     Ok(())
 }

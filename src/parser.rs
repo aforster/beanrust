@@ -12,6 +12,7 @@ pub struct ParsedEntries {
     pub balance: Vec<Balance>,
     pub close: Vec<Close>,
     pub commodity: Vec<Commodity>,
+    pub price: Vec<Price>,
     // temporry until impl complete
     pub unhandled_entries: Vec<String>,
 }
@@ -29,6 +30,7 @@ impl ParsedEntries {
             EntryVariant::Balance(b) => self.balance.push(b),
             EntryVariant::Close(c) => self.close.push(c),
             EntryVariant::Commodity(c) => self.commodity.push(c),
+            EntryVariant::Price(p) => self.price.push(p),
             _ => {
                 panic!("Unsupported entry type in push")
             }
@@ -51,6 +53,7 @@ impl Default for ParsedEntries {
             balance: vec![],
             close: vec![],
             commodity: vec![],
+            price: vec![],
             unhandled_entries: vec![],
         }
     }
@@ -126,6 +129,7 @@ impl<'a> StatementParser<'a> {
             "close" => Ok(EntryVariant::Close(self.parse_close(date)?)),
             "balance" => Ok(EntryVariant::Balance(self.parse_balance(date)?)),
             "commodity" => Ok(EntryVariant::Commodity(self.parse_commodity(date)?)),
+            "price" => Ok(EntryVariant::Price(self.parse_price(date)?)),
             &_ => Err(self.new_parse_err(format!("Unknown command `{}` in entry", cmd))),
         }
     }
@@ -137,15 +141,16 @@ impl<'a> StatementParser<'a> {
         })
     }
 
-    fn parse_account(
+    fn parse_next_token(
         &self,
         allow_remaining: bool,
+        token_type: &str,
     ) -> Result<(String, Option<&'a str>), Box<ParseError>> {
         let input = self.remaining.trim();
         match input.split_once(" ") {
             None => {
                 if input.is_empty() {
-                    Err(self.new_parse_err("No account specified in entry".to_string()))
+                    Err(self.new_parse_err(format!("No {token_type} specified in entry")))
                 } else {
                     Ok((input.to_string(), None))
                 }
@@ -153,8 +158,7 @@ impl<'a> StatementParser<'a> {
             Some((acc, remaining)) => {
                 if !allow_remaining && !remaining.is_empty() {
                     return Err(self.new_parse_err(format!(
-                        "Unexpected remaining input in account parsing: `{}`",
-                        remaining
+                        "Unexpected remaining input in {token_type} parsing: `{remaining}`"
                     )));
                 }
                 Ok((acc.trim().to_string(), Some(remaining)))
@@ -164,7 +168,7 @@ impl<'a> StatementParser<'a> {
 
     /// The parse functions returning entry types do not have to update self.remaining, as the parser is done after this.
     fn parse_open(&self, date: Date) -> Result<Open, Box<ParseError>> {
-        let (account, remaining) = self.parse_account(true)?;
+        let (account, remaining) = self.parse_next_token(true, "account")?;
 
         // handle allowed currencies here.
         let mut allowed_currencies = None;
@@ -183,8 +187,7 @@ impl<'a> StatementParser<'a> {
     }
 
     fn parse_close(&self, date: Date) -> Result<Close, Box<ParseError>> {
-        let account = self.parse_account(false)?.0;
-
+        let account = self.parse_next_token(false, "account")?.0;
         Ok(Close { date, account })
     }
 
@@ -205,31 +208,48 @@ impl<'a> StatementParser<'a> {
         })
     }
 
-    fn parse_balance(&self, date: Date) -> Result<Balance, Box<ParseError>> {
-        let (account, remaining) = self.parse_account(true)?;
+    // e.g. a statement like "Assets:Depot:META 1.23 CHF" or "META 1.23 USD"
+    fn parse_str_and_price(&self, token_type: &str) -> Result<(String, Amount), Box<ParseError>> {
+        let (out_str, remaining) = self.parse_next_token(true, token_type)?;
         let (amnt_string, currency) = remaining
-            .ok_or(self.new_parse_err("No amount in balance entry".to_string()))?
+            .ok_or(self.new_parse_err(format!("No amount in {token_type} entry")))?
             .trim()
             .split_once(' ')
-            .ok_or(self.new_parse_err("no currency in balance entry".to_string()))?;
+            .ok_or(self.new_parse_err(format!("no currency in {token_type} entry")))?;
 
         let number = Decimal::from_str_exact(amnt_string).map_err(|e| {
             self.new_parse_err(format!(
-                "unable to parse amount number in balance entry: {}",
-                e
+                "unable to parse amount number in {token_type} entry: {e}"
             ))
         })?;
         let currency = currency.trim();
+        // All callers here assume that nothing comes after this. That might change when we handle transactions.
         if currency.contains(' ') {
             return Err(self.new_parse_err(format!(
                 "unexpected remaining input in currency parsing: `{}`",
                 currency
             )));
         }
+
+        Ok((out_str, Amount::new(number, currency.to_string())))
+    }
+
+    fn parse_balance(&self, date: Date) -> Result<Balance, Box<ParseError>> {
+        let (account, amount) = self.parse_str_and_price("balance")?;
         Ok(Balance {
             date,
             account,
-            amount: Amount::new(number, currency.to_string()),
+            amount,
+        })
+    }
+
+    // 2024-10-03 price META 1.23 CHF
+    fn parse_price(&self, date: Date) -> Result<Price, Box<ParseError>> {
+        let (currency, amount) = self.parse_str_and_price("price")?;
+        Ok(Price {
+            date,
+            currency,
+            amount,
         })
     }
 }
@@ -399,7 +419,7 @@ mod tests {
             statement: "",
             remaining: "Assets:Depot:META META",
         }
-        .parse_account(true)
+        .parse_next_token(true, "foo")
         .unwrap();
         assert_eq!(acc, "Assets:Depot:META".to_string());
         assert_eq!(rem, Some("META"));
@@ -407,14 +427,14 @@ mod tests {
             statement: "",
             remaining: "Assets:Depot:META META",
         }
-        .parse_account(false);
+        .parse_next_token(false, "foo");
         assert!(result.is_err());
 
         let (acc, rem) = StatementParser {
             statement: "",
             remaining: "Assets:Depot:Cash",
         }
-        .parse_account(true)
+        .parse_next_token(true, "foo")
         .unwrap();
         assert_eq!(acc, "Assets:Depot:Cash".to_string());
         assert_eq!(rem, None);
@@ -422,7 +442,7 @@ mod tests {
             statement: "",
             remaining: "Assets:Depot:Cash",
         }
-        .parse_account(false)
+        .parse_next_token(false, "foo")
         .unwrap();
         assert_eq!(acc, "Assets:Depot:Cash".to_string());
         assert_eq!(rem, None);
@@ -431,7 +451,7 @@ mod tests {
             statement: "",
             remaining: "",
         }
-        .parse_account(false);
+        .parse_next_token(false, "foo");
         assert!(result.is_err());
 
         Ok(())
