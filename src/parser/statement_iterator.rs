@@ -1,4 +1,6 @@
+use crate::parser::trim_comment_at_end;
 use regex::Regex;
+
 pub struct StatementIterator<'a> {
     data: &'a str,
 
@@ -10,16 +12,17 @@ pub struct StatementIterator<'a> {
     state: IteratorState,
 }
 
+/// Similar to str::split. But handles multiple spaces between tokens gracefully.
+pub struct TokenIterator<'a> {
+    data: &'a str,
+    position: usize,
+    size: usize,
+}
+
 enum IteratorState {
     SearchingNextStart,
     ReadingMultiline(usize), // position of the start of the multiline entry
     FinishedMultilineFoundSingle((usize, usize)), // (start, end) of the next single/multiline entry
-}
-
-struct LineIterator<'a> {
-    data: &'a str,
-    position: usize,
-    size: usize,
 }
 
 impl<'a> StatementIterator<'a> {
@@ -38,33 +41,6 @@ impl<'a> StatementIterator<'a> {
     }
 }
 
-impl<'a> LineIterator<'a> {
-    pub fn new(data: &'a str) -> Self {
-        let size = data.len();
-        LineIterator {
-            data,
-            position: 0,
-            size,
-        }
-    }
-}
-impl<'a> Iterator for LineIterator<'a> {
-    type Item = (usize, usize); // (start, end) positions of the line in the original string
-    fn next(&mut self) -> Option<(usize, usize)> {
-        if self.position >= self.size {
-            return None;
-        }
-        let start = self.position;
-        if let Some(pos) = &self.data[start..].find('\n') {
-            self.position += pos + 1; // Move past the newline character
-            Some((start, start + pos))
-        } else {
-            // Last line without a newline
-            self.position = self.size; // Move to the end
-            Some((start, self.size))
-        }
-    }
-}
 impl<'a> Iterator for StatementIterator<'a> {
     type Item = &'a str;
 
@@ -133,6 +109,95 @@ impl<'a> Iterator for StatementIterator<'a> {
                 self.state = IteratorState::SearchingNextStart;
                 return Some(&self.data[start..end]);
             }
+        }
+    }
+}
+
+impl<'a> LineIterator<'a> {
+    pub fn new(data: &'a str) -> Self {
+        let size = data.len();
+        LineIterator {
+            data,
+            position: 0,
+            size,
+        }
+    }
+}
+
+impl<'a> TokenIterator<'a> {
+    pub fn new(data: &'a str) -> Self {
+        if data.contains('\n') {
+            panic!("TokenIterator does not support multiline strings");
+        }
+
+        let data = trim_comment_at_end(data.trim());
+        let size = data.len();
+        TokenIterator {
+            data,
+            position: 0,
+            size,
+        }
+    }
+
+    pub fn remaining(&self) -> &'a str {
+        match self.next_non_whitespace() {
+            Some(pos) => return &self.data[pos..],
+            None => return "",
+        }
+    }
+
+    fn next_non_whitespace(&self) -> Option<usize> {
+        self.data[self.position..]
+            .find(|c: char| !c.is_whitespace())
+            .map(|pos| self.position + pos)
+    }
+}
+
+impl<'a> Iterator for TokenIterator<'a> {
+    type Item = &'a str;
+
+    // TODO: handle comments at end of line
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.position >= self.size {
+            return None;
+        }
+        let start_abs: usize = self.next_non_whitespace()?;
+        match self.data[start_abs..].find(|c: char| c.is_whitespace()) {
+            Some(end) => {
+                let token = &self.data[start_abs..start_abs + end];
+                self.position = start_abs + end;
+                Some(token)
+            }
+            None => {
+                let token = &self.data[start_abs..];
+                self.position = self.size;
+                Some(token)
+            }
+        }
+    }
+}
+
+struct LineIterator<'a> {
+    data: &'a str,
+    position: usize,
+    size: usize,
+}
+
+impl<'a> Iterator for LineIterator<'a> {
+    type Item = (usize, usize); // (start, end) positions of the line in the original string
+
+    fn next(&mut self) -> Option<(usize, usize)> {
+        if self.position >= self.size {
+            return None;
+        }
+        let start = self.position;
+        if let Some(pos) = &self.data[start..].find('\n') {
+            self.position += pos + 1; // Move past the newline character
+            Some((start, start + pos))
+        } else {
+            // Last line without a newline
+            self.position = self.size; // Move to the end
+            Some((start, self.size))
         }
     }
 }
@@ -241,6 +306,42 @@ foo bar3
         assert_eq!(&data[results[1].0..results[1].1], "");
         assert_eq!(&data[results[2].0..results[2].1], "bar");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_token_iterator() -> Result<(), String> {
+        let mut iterator = TokenIterator::new("");
+        assert_eq!(iterator.next(), None);
+
+        assert_eq!(
+            TokenIterator::new("  foo   bar  baz   ").collect::<Vec<_>>(),
+            vec!["foo", "bar", "baz"]
+        );
+
+        assert_eq!(
+            TokenIterator::new("  $oo  öar  üa").collect::<Vec<_>>(),
+            vec!["$oo", "öar", "üa"]
+        );
+
+        assert_eq!(
+            TokenIterator::new("5.123478 USD {} @ 1 CHF").collect::<Vec<_>>(),
+            vec!["5.123478", "USD", "{}", "@", "1", "CHF"]
+        );
+
+        assert_eq!(
+            TokenIterator::new("5.123478 USD ; omg ").collect::<Vec<_>>(),
+            vec!["5.123478", "USD"]
+        );
+        assert_eq!(
+            TokenIterator::new("5.123478 USD # omg ").collect::<Vec<_>>(),
+            vec!["5.123478", "USD"]
+        );
+
+        let mut it = TokenIterator::new("  foo   bar  baz ; og  ");
+        assert_eq!(it.remaining(), "foo   bar  baz");
+        it.next();
+        assert_eq!(it.remaining(), "bar  baz");
         Ok(())
     }
 }
