@@ -12,11 +12,8 @@ pub struct StatementIterator<'a> {
     state: IteratorState,
 }
 
-/// Similar to str::split. But handles multiple spaces between tokens gracefully.
 pub struct TokenIterator<'a> {
-    data: &'a str,
-    position: usize,
-    size: usize,
+    inner: Box<dyn Iterator<Item = &'a str> + 'a>,
 }
 
 enum IteratorState {
@@ -126,30 +123,13 @@ impl<'a> LineIterator<'a> {
 
 impl<'a> TokenIterator<'a> {
     pub fn new(data: &'a str) -> Self {
-        if data.contains('\n') {
-            panic!("TokenIterator does not support multiline strings");
+        Self {
+            inner: Box::new(
+                trim_comment_at_end(data)
+                    .split_whitespace()
+                    .filter(|s| !s.is_empty()),
+            ),
         }
-
-        let data = trim_comment_at_end(data.trim());
-        let size = data.len();
-        TokenIterator {
-            data,
-            position: 0,
-            size,
-        }
-    }
-
-    pub fn remaining(&self) -> &'a str {
-        match self.next_non_whitespace() {
-            Some(pos) => return &self.data[pos..],
-            None => return "",
-        }
-    }
-
-    fn next_non_whitespace(&self) -> Option<usize> {
-        self.data[self.position..]
-            .find(|c: char| !c.is_whitespace())
-            .map(|pos| self.position + pos)
     }
 }
 
@@ -158,22 +138,7 @@ impl<'a> Iterator for TokenIterator<'a> {
 
     // TODO: handle comments at end of line
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.size {
-            return None;
-        }
-        let start_abs: usize = self.next_non_whitespace()?;
-        match self.data[start_abs..].find(|c: char| c.is_whitespace()) {
-            Some(end) => {
-                let token = &self.data[start_abs..start_abs + end];
-                self.position = start_abs + end;
-                Some(token)
-            }
-            None => {
-                let token = &self.data[start_abs..];
-                self.position = self.size;
-                Some(token)
-            }
-        }
+        self.inner.next()
     }
 }
 
@@ -336,10 +301,6 @@ foo bar3
             vec!["5.123478", "USD"]
         );
 
-        let mut it = TokenIterator::new("  foo   bar  baz ; og  ");
-        assert_eq!(it.remaining(), "foo   bar  baz");
-        it.next();
-        assert_eq!(it.remaining(), "bar  baz");
         Ok(())
     }
 }

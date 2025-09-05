@@ -162,7 +162,7 @@ impl<'a> StatementParser<'a> {
         if let Some(_) = token_it.next() {
             return Err(self.new_parse_err(format!(
                 "Unexpected remaining input in {token_type} parsing: `{}`",
-                token_it.remaining()
+                token_it.collect::<Vec<&str>>().join(" ")
             )));
         }
         Ok(())
