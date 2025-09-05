@@ -3,5 +3,8 @@
         {
             "path": "."
         }
-    ]
+    ],
+    "settings": {
+        "rust-analyzer.showDependenciesExplorer": true
+    }
 }
