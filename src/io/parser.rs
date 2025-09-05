@@ -15,6 +15,7 @@ pub struct ParsedEntries {
     pub close: Vec<Close>,
     pub commodity: Vec<Commodity>,
     pub price: Vec<PriceEntry>,
+    pub transactions: Vec<Transaction>,
     // temporry until impl complete
     pub unhandled_entries: Vec<String>,
 }
@@ -33,6 +34,7 @@ impl ParsedEntries {
             EntryVariant::Close(c) => self.close.push(c),
             EntryVariant::Commodity(c) => self.commodity.push(c),
             EntryVariant::PriceEntry(p) => self.price.push(p),
+            EntryVariant::Transaction(t) => self.transactions.push(t),
             _ => {
                 panic!("Unsupported entry type in push")
             }
@@ -57,6 +59,7 @@ impl Default for ParsedEntries {
             commodity: vec![],
             price: vec![],
             unhandled_entries: vec![],
+            transactions: vec![],
         }
     }
 }
@@ -100,6 +103,32 @@ fn trim_comment_at_end(data: &str) -> &str {
     data.trim()
 }
 
+fn date_and_cmd<'a>(statement: &'a str) -> Result<(Date, &'a str, &'a str), String> {
+    let (date, remain) = statement
+        .trim_start()
+        .split_once(' ')
+        .ok_or(format!("No date in entry: {statement}"))?;
+    let date: Date = Date::from_str(date).map_err(|e| e.to_string())?;
+
+    let cmd;
+    let remain_final;
+    let remain = remain.trim_start();
+    match remain.find(|c: char| c.is_whitespace()) {
+        None => {
+            cmd = remain.trim();
+            remain_final = "";
+        }
+        Some(idx) => {
+            (cmd, remain_final) = remain.split_at(idx);
+        }
+    }
+
+    if cmd.is_empty() {
+        return Err(format!("No command in entry: {statement}"));
+    }
+    Ok((date, cmd, remain_final))
+}
+
 /// input is a complete entry as a string, it can be multiple lines for eg transactions.
 
 struct StatementParser<'a> {
@@ -112,16 +141,15 @@ impl<'a> StatementParser<'a> {
     }
 
     pub fn parse_entry(&mut self) -> Result<EntryVariant, Box<ParseError>> {
-        // An entry always starts with a date:
-        let (date, remain) = self.statement.trim().split_once(" ").unwrap();
-        let date: Date = Date::from_str(date)
-            .map_err(|e| self.new_parse_err(format!("unable to parse date: {}", e)))?;
-
-        let (cmd, remain) = remain
-            .trim()
-            .split_once(" ")
-            .ok_or(self.new_parse_err("No command in entry".to_string()))?;
+        let (date, cmd, remain) =
+            date_and_cmd(self.statement).map_err(|e| self.new_parse_err(e))?;
         let remaining = trim_comment_at_end(remain).trim();
+        if let Some(flag) = transaction_parsing::parse_flag(cmd) {
+            // This is a transaction entry, the rest of the statement is the complete transaction.
+            return Ok(EntryVariant::Transaction(
+                self.parse_transaction(date, flag, remaining)?,
+            ));
+        }
         match cmd {
             // TODO: Change all of these to use TryFrom instead of parse_xxx functions.
             "open" => Ok(EntryVariant::Open(self.parse_open(date, remaining)?)),
@@ -131,12 +159,7 @@ impl<'a> StatementParser<'a> {
                 self.parse_commodity(date, remaining)?,
             )),
             "price" => Ok(EntryVariant::PriceEntry(self.parse_price(date, remaining)?)),
-            "*" => Ok(EntryVariant::Transaction(
-                self.parse_transaction(&self.statement)?,
-            )),
-            "!" => Ok(EntryVariant::Transaction(
-                self.parse_transaction(&self.statement)?,
-            )),
+
             &_ => Err(self.new_parse_err(format!("Unknown command `{}` in entry", cmd))),
         }
     }
@@ -253,8 +276,13 @@ impl<'a> StatementParser<'a> {
         })
     }
 
-    fn parse_transaction(&self, statement: &str) -> Result<Transaction, Box<ParseError>> {
-        Transaction::try_from(statement)
+    fn parse_transaction(
+        &self,
+        date: Date,
+        flag: TransactionFlag,
+        statement: &str,
+    ) -> Result<Transaction, Box<ParseError>> {
+        Transaction::try_from((date, flag, statement))
             .map_err(|e| self.new_parse_err(format!("unable to parse transaction: {e}")))
     }
 }
@@ -407,5 +435,39 @@ mod tests {
         assert!(!entries.is_empty());
         assert_eq!(entries.len(), 1);
         Ok(())
+    }
+
+    #[test]
+    fn test_date_and_cmd() {
+        let (d, cmd, remain) = date_and_cmd("2024-01-01 open Assets:Cash").unwrap();
+        assert_eq!(d, date(2024, 1, 1));
+        assert_eq!(cmd, "open");
+        assert_eq!(remain, " Assets:Cash");
+
+        let (d, cmd, remain) = date_and_cmd("2024-01-01    open   Assets:Cash   ").unwrap();
+        assert_eq!(d, date(2024, 1, 1));
+        assert_eq!(cmd, "open");
+        assert_eq!(remain, "   Assets:Cash   ");
+
+        let (d, cmd, remain) = date_and_cmd("2024-01-01 open").unwrap();
+        assert_eq!(d, date(2024, 1, 1));
+        assert_eq!(cmd, "open");
+        assert_eq!(remain, "");
+
+        let (d, cmd, remain) = date_and_cmd("2024-01-01 *\n").unwrap();
+        assert_eq!(d, date(2024, 1, 1));
+        assert_eq!(cmd, "*");
+        assert_eq!(remain, "\n");
+
+        let (d, cmd, remain) = date_and_cmd("2024-01-01 * \n fo bar").unwrap();
+        assert_eq!(d, date(2024, 1, 1));
+        assert_eq!(cmd, "*");
+        assert_eq!(remain, " \n fo bar");
+
+        let res = date_and_cmd("2024-01-01");
+        assert!(res.is_err());
+
+        let res = date_and_cmd("open Assets:Cash");
+        assert!(res.is_err());
     }
 }
