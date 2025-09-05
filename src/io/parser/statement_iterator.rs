@@ -13,7 +13,7 @@ pub struct StatementIterator<'a> {
 }
 
 pub struct TokenIterator<'a> {
-    inner: Box<dyn Iterator<Item = &'a str> + 'a>,
+    inner: std::iter::Filter<std::str::SplitWhitespace<'a>, fn(&'_ &str) -> bool>,
 }
 
 enum IteratorState {
@@ -124,11 +124,9 @@ impl<'a> LineIterator<'a> {
 impl<'a> TokenIterator<'a> {
     pub fn new(data: &'a str) -> Self {
         Self {
-            inner: Box::new(
-                trim_comment_at_end(data)
-                    .split_whitespace()
-                    .filter(|s| !s.is_empty()),
-            ),
+            inner: trim_comment_at_end(data)
+                .split_whitespace()
+                .filter(|s| !s.is_empty()),
         }
     }
 }
