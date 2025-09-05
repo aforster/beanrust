@@ -1,3 +1,5 @@
+use crate::io::parser::TokenIterator;
+use crate::io::printer::print_transaction;
 use jiff::civil::Date;
 use rust_decimal::Decimal;
 use std::fmt::Display;
@@ -8,7 +10,7 @@ pub enum EntryVariant {
     Open(Open),
     Close(Close),
     Commodity(Commodity),
-    Price(Price),
+    PriceEntry(PriceEntry),
 }
 
 impl EntryVariant {
@@ -19,11 +21,11 @@ impl EntryVariant {
             EntryVariant::Open(t) => t.date,
             EntryVariant::Close(t) => t.date,
             EntryVariant::Commodity(c) => c.date,
-            EntryVariant::Price(p) => p.date,
+            EntryVariant::PriceEntry(p) => p.date,
         }
     }
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Amount {
     pub number: Decimal,
     pub currency: String,
@@ -64,16 +66,20 @@ pub enum CostType {
     Automatic,
 }
 
+pub struct PriceEntry {
+    pub date: Date,
+    // Price for currency
+    pub currency: String,
+    // Price in amount
+    pub amount: Amount,
+}
+
 // Price paid or received for an asset. E.g. 500 USD @ 1.2CHF means that 500 USD was
 // bought or sold at a price of 1.2 CHF per USD.
 // 500 META {30 USD} @ 50 USD means that 500 shares of META with a cost of 30 USD was
 // bought or sold (very likely sold for that syntax) at a price of 50 USD per META share.
 #[derive(Debug)]
 pub struct Price {
-    pub date: Date,
-    // Price for currency
-    pub currency: String,
-    // Price in amount
     pub amount: Amount,
 }
 
@@ -133,10 +139,29 @@ impl Display for Amount {
     }
 }
 
+impl TryFrom<&str> for Amount {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let mut it = TokenIterator::new(value);
+        let number_str = it.next().ok_or_else(|| "No number found".to_string())?;
+        let number: Decimal = number_str
+            .try_into()
+            .map_err(|e| format!("Error parsing number '{number_str}': {e}"))?;
+        let currency = it
+            .next()
+            .ok_or_else(|| "No currency found".to_string())?
+            .to_string();
+        if it.next().is_some() {
+            return Err("Extra tokens found after currency".to_string());
+        }
+        Ok(Amount { number, currency })
+    }
+}
+
 impl Display for Transaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // temporary implementation until we have a printer implementation.
-        write!(f, "{:#?}", self)
+        write!(f, "{}", print_transaction(self))
     }
 }
 
@@ -169,10 +194,21 @@ where
 mod test {
     use super::*;
     use jiff::civil::date;
-    use std::str::FromStr;
 
-    fn num(s: &str) -> Decimal {
-        Decimal::from_str(s).unwrap()
+    #[test]
+    fn test_try_amount_from_string() {
+        assert_eq!(
+            Amount::try_from("100     USD  ").unwrap(),
+            Amount::new(100.into(), "USD".to_string())
+        );
+        assert_eq!(
+            Amount::try_from("-0.43 USD").unwrap(),
+            Amount::new(Decimal::new(-43, 2), "USD".to_string())
+        );
+        assert!(Amount::try_from("100").is_err());
+        assert!(Amount::try_from("100 USD extra").is_err());
+        assert!(Amount::try_from("abc USD").is_err());
+        assert!(Amount::try_from("100  ").is_err());
     }
 
     #[test]
@@ -181,24 +217,24 @@ mod test {
         assert_eq!(
             sum_amounts_it(
                 [
-                    Amount::new(num("100"), "USD".to_string()),
-                    Amount::new(num("-50"), "USD".to_string())
+                    Amount::new(100.into(), "USD".to_string()),
+                    Amount::new((-50).into(), "USD".to_string())
                 ]
                 .iter()
             )
             .unwrap(),
-            Amount::new(num("50"), "USD".to_string())
+            Amount::new(50.into(), "USD".to_string())
         );
         assert_eq!(
-            sum_amounts_it([Amount::new(num("-50"), "USD".to_string())].iter()).unwrap(),
-            Amount::new(num("-50"), "USD".to_string())
+            sum_amounts_it([Amount::new((-50).into(), "USD".to_string())].iter()).unwrap(),
+            Amount::new((-50).into(), "USD".to_string())
         );
 
         assert!(
             sum_amounts_it(
                 [
-                    Amount::new(num("100"), "USD".to_string()),
-                    Amount::new(num("-50"), "CHF".to_string())
+                    Amount::new(100.into(), "USD".to_string()),
+                    Amount::new((-50).into(), "CHF".to_string())
                 ]
                 .iter()
             )
@@ -219,14 +255,14 @@ mod test {
         let account = "Assets:Cash".to_string();
         t.postings.push(Posting {
             account: account.clone(),
-            amount: Amount::new(num("100"), "USD".to_string()),
+            amount: Amount::new(100.into(), "USD".to_string()),
             price: None,
             cost: None,
         });
         assert!(t.check().is_err());
         t.postings.push(Posting {
             account,
-            amount: Amount::new(num("-100"), "USD".to_string()),
+            amount: Amount::new((-100).into(), "USD".to_string()),
             price: None,
             cost: None,
         });

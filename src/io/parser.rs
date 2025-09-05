@@ -5,7 +5,7 @@ use crate::core::types::*;
 use error::ParseError;
 use jiff::civil::Date;
 use rust_decimal::Decimal;
-use statement_iterator::TokenIterator;
+pub use statement_iterator::TokenIterator;
 use std::error::Error;
 use std::{fs, path::Path, str::FromStr, vec};
 
@@ -14,7 +14,7 @@ pub struct ParsedEntries {
     pub balance: Vec<Balance>,
     pub close: Vec<Close>,
     pub commodity: Vec<Commodity>,
-    pub price: Vec<Price>,
+    pub price: Vec<PriceEntry>,
     // temporry until impl complete
     pub unhandled_entries: Vec<String>,
 }
@@ -32,7 +32,7 @@ impl ParsedEntries {
             EntryVariant::Balance(b) => self.balance.push(b),
             EntryVariant::Close(c) => self.close.push(c),
             EntryVariant::Commodity(c) => self.commodity.push(c),
-            EntryVariant::Price(p) => self.price.push(p),
+            EntryVariant::PriceEntry(p) => self.price.push(p),
             _ => {
                 panic!("Unsupported entry type in push")
             }
@@ -129,7 +129,7 @@ impl<'a> StatementParser<'a> {
             "commodity" => Ok(EntryVariant::Commodity(
                 self.parse_commodity(date, remaining)?,
             )),
-            "price" => Ok(EntryVariant::Price(self.parse_price(date, remaining)?)),
+            "price" => Ok(EntryVariant::PriceEntry(self.parse_price(date, remaining)?)),
             "*" => Ok(EntryVariant::Transaction(
                 self.parse_transaction(date, remaining)?,
             )),
@@ -240,9 +240,9 @@ impl<'a> StatementParser<'a> {
     }
 
     // 2024-10-03 price META 1.23 CHF
-    fn parse_price(&self, date: Date, remaining: &str) -> Result<Price, Box<ParseError>> {
+    fn parse_price(&self, date: Date, remaining: &str) -> Result<PriceEntry, Box<ParseError>> {
         let (currency, amount) = self.parse_str_and_price(remaining, "price")?;
-        Ok(Price {
+        Ok(PriceEntry {
             date,
             currency,
             amount,
@@ -251,8 +251,8 @@ impl<'a> StatementParser<'a> {
 
     fn parse_transaction(
         &self,
-        date: Date,
-        remaining: &str,
+        _date: Date,
+        _remaining: &str,
     ) -> Result<Transaction, Box<ParseError>> {
         Err(self.new_parse_err("not implemented".to_string()))
     }
