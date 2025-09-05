@@ -123,6 +123,7 @@ impl<'a> StatementParser<'a> {
             .ok_or(self.new_parse_err("No command in entry".to_string()))?;
         let remaining = trim_comment_at_end(remain).trim();
         match cmd {
+            // TODO: Change all of these to use TryFrom instead of parse_xxx functions.
             "open" => Ok(EntryVariant::Open(self.parse_open(date, remaining)?)),
             "close" => Ok(EntryVariant::Close(self.parse_close(date, remaining)?)),
             "balance" => Ok(EntryVariant::Balance(self.parse_balance(date, remaining)?)),
@@ -131,7 +132,10 @@ impl<'a> StatementParser<'a> {
             )),
             "price" => Ok(EntryVariant::PriceEntry(self.parse_price(date, remaining)?)),
             "*" => Ok(EntryVariant::Transaction(
-                self.parse_transaction(date, remaining)?,
+                self.parse_transaction(&self.statement)?,
+            )),
+            "!" => Ok(EntryVariant::Transaction(
+                self.parse_transaction(&self.statement)?,
             )),
             &_ => Err(self.new_parse_err(format!("Unknown command `{}` in entry", cmd))),
         }
@@ -249,12 +253,9 @@ impl<'a> StatementParser<'a> {
         })
     }
 
-    fn parse_transaction(
-        &self,
-        _date: Date,
-        _remaining: &str,
-    ) -> Result<Transaction, Box<ParseError>> {
-        Err(self.new_parse_err("not implemented".to_string()))
+    fn parse_transaction(&self, statement: &str) -> Result<Transaction, Box<ParseError>> {
+        Transaction::try_from(statement)
+            .map_err(|e| self.new_parse_err(format!("unable to parse transaction: {e}")))
     }
 }
 

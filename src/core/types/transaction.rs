@@ -2,7 +2,7 @@ use super::{Amount, sum_amounts_it};
 use jiff::civil::Date;
 use rust_decimal::Decimal;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum TransactionFlag {
     OK,
     Error,
