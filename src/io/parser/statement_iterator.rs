@@ -1,4 +1,4 @@
-use crate::parser::trim_comment_at_end;
+use super::trim_comment_at_end;
 use regex::Regex;
 
 pub struct StatementIterator<'a> {
@@ -203,9 +203,7 @@ impl<'a> Iterator for LineIterator<'a> {
 }
 
 fn skip_line(line: &str) -> bool {
-    line.is_empty()
-        || crate::parser::is_comment_char(line.chars().next().unwrap())
-        || line.starts_with('*')
+    line.is_empty() || super::is_comment_char(line.chars().next().unwrap()) || line.starts_with('*')
 }
 
 #[cfg(test)]

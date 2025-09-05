@@ -2,10 +2,10 @@ mod statement_iterator;
 mod transaction_parsing;
 
 use crate::core::types::*;
-use crate::parser::statement_iterator::TokenIterator;
 use error::ParseError;
 use jiff::civil::Date;
 use rust_decimal::Decimal;
+use statement_iterator::TokenIterator;
 use std::error::Error;
 use std::{fs, path::Path, str::FromStr, vec};
 

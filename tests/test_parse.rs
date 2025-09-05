@@ -1,4 +1,4 @@
-use beanrust::parser;
+use beanrust::io::parser;
 use std::{env, path};
 
 #[test]
