@@ -126,8 +126,22 @@ fn date_and_cmd<'a>(statement: &'a str) -> Result<(Date, &'a str, &'a str), Stri
     Ok((date, cmd, remain_final))
 }
 
-/// input is a complete entry as a string, it can be multiple lines for eg transactions.
+fn consume_amount(input: &str) -> Result<(Amount, &str), String> {
+    // Options are <number> <currency> or <number><currency>. In the future maybe also  <math><currency>
+    // currencies must start with a letter, so lets search for the first character which is a letter,
+    // The number definitely won't contain a letter...
+    let currency_start = input
+        .find(|c: char| c.is_alphabetic())
+        .ok_or(format!("No currency found: {input}"))?;
+    let currency_end = currency_start
+        + input[currency_start..]
+            .find(|c: char| !c.is_alphabetic())
+            .unwrap_or(input.len() - currency_start);
+    let (amount_str, remain) = input.split_at(currency_end);
+    Ok((amount_str.try_into()?, remain))
+}
 
+/// input is a complete entry as a string, it can be multiple lines for eg transactions.
 struct StatementParser<'a> {
     statement: &'a str, // complete statement, can be multiline
 }
@@ -307,6 +321,34 @@ pub mod error {
 mod tests {
     use super::*;
     use jiff::civil::date;
+
+    #[test]
+    fn test_consume_amount() {
+        let (amnt, remain) = consume_amount("5 CHF some remaining").unwrap();
+        assert_eq!(amnt.number, Decimal::new(5, 0));
+        assert_eq!(amnt.currency, "CHF");
+        assert_eq!(remain, " some remaining");
+
+        let (amnt, remain) = consume_amount("-5.1234 USD some remaining").unwrap();
+        assert_eq!(amnt.number, Decimal::new(-51234, 4));
+        assert_eq!(amnt.currency, "USD");
+        assert_eq!(remain, " some remaining");
+
+        let (amnt, remain) = consume_amount("5 BTC").unwrap();
+        assert_eq!(amnt.number, Decimal::new(5, 0));
+        assert_eq!(amnt.currency, "BTC");
+        assert_eq!(remain, "");
+
+        let (amnt, remain) = consume_amount("5BTC").unwrap();
+        assert_eq!(amnt.number, Decimal::new(5, 0));
+        assert_eq!(amnt.currency, "BTC");
+        assert_eq!(remain, "");
+
+        assert!(consume_amount("5").is_err());
+        assert!(consume_amount("CHF").is_err());
+        assert!(consume_amount("CHF 5").is_err());
+        assert!(consume_amount("5,67 CHF").is_err());
+    }
 
     #[test]
     fn test_parse_entry() -> Result<(), String> {

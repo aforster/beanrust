@@ -1,5 +1,8 @@
-use super::date_and_cmd;
-use crate::{core::types::*, io::parser::TokenIterator};
+use super::{consume_amount, date_and_cmd};
+use crate::{
+    core::types::*,
+    io::parser::{TokenIterator, trim_comment_at_end},
+};
 use jiff::civil::Date;
 use regex::Regex;
 
@@ -23,21 +26,8 @@ impl TryFrom<&str> for Posting {
         let (acc, remain) = input
             .split_once(' ')
             .ok_or(format!("No account in posting: {input}"))?;
+        let (amount, remain) = consume_amount(remain)?;
         let remain = remain.trim();
-        let nr_end = remain
-            .find(' ')
-            .ok_or(format!("No valid amount in posting: {input}"))?;
-        let currency_start = nr_end
-            + remain[nr_end..]
-                .find(|c: char| !c.is_whitespace())
-                .ok_or(format!("No valid amount in posting: {input}"))?;
-        let amnt_end = currency_start
-            + remain[currency_start..]
-                .find(|c: char| c.is_whitespace())
-                .unwrap_or(remain.len() - currency_start);
-
-        let amount: Amount = remain[..amnt_end].trim().try_into()?;
-        let remain = remain[amnt_end..].trim();
         if remain.is_empty() {
             return Ok(Posting {
                 account: acc.to_string(),
@@ -61,9 +51,12 @@ impl TryFrom<(Date, TransactionFlag, &str)> for Transaction {
         // Parse postings:
         let mut postings: Vec<Posting> = vec![];
         for line in postings_str.lines() {
-            let posting = Posting::try_from(line.trim())
-                .map_err(|e| format!("Unable to parse posting '{line}': {e}"))?;
-            postings.push(posting);
+            let sanitized = trim_comment_at_end(line);
+            if !sanitized.is_empty() {
+                let posting = Posting::try_from(sanitized)
+                    .map_err(|e| format!("Unable to parse posting '{line}': {e}"))?;
+                postings.push(posting);
+            }
         }
 
         Ok(Transaction {
@@ -124,9 +117,10 @@ fn parse_price_and_cost(
     if input.is_empty() {
         return Ok((None, None));
     }
+    let amnt_regex = r"(\d+.*\w+)";
     let reg = Regex::new(
-        r"^((\@ *(?P<unitpr>\d+\.?\d* *\w+))|(\@\@ *(?P<totpr>\d+\.?\d* *\w+)))? *((\{ *(?P<unitcost>\d+\.?\d* *\w+)\})|(\{\{ *(?P<totcost>\d+\.?\d* *\w+ *)\}\}))?$",
-    ).unwrap();
+        &format!(r"^((\@ *(?P<unitpr>{amnt_regex}))|(\@\@ *(?P<totpr>{amnt_regex})))? *((\{{ *(?P<unitcost>{amnt_regex})\}})|(\{{\{{ *(?P<totcost>{amnt_regex} *)\}}\}}))?$",
+    )).unwrap();
 
     let mut price = None;
     let mut cost = None;
@@ -182,7 +176,7 @@ mod test {
         assert_eq!(result.date, date(2022, 5, 3));
         assert_eq!(result.flag, crate::core::types::TransactionFlag::OK);
 
-        let result = Transaction::try_from(
+        let result: Transaction = Transaction::try_from(
             "2022-05-03 *\n    Assets:Cash 5   CHF\n    Assets:Cash2   5.1234 USD  ",
         )?;
         assert_eq!(result.postings.len(), 2);
@@ -192,6 +186,15 @@ mod test {
         assert_eq!(result.postings[1].account, "Assets:Cash2");
         assert_eq!(result.postings[1].amount.number, Decimal::new(51234, 4));
         assert_eq!(result.postings[1].amount.currency, "USD");
+        assert_eq!(result.date, date(2022, 5, 3));
+        assert_eq!(result.flag, crate::core::types::TransactionFlag::OK);
+
+        let result: Transaction =
+            Transaction::try_from("2022-05-03 *\n    Assets:Cash 5   CHF ; foobar\n    ")?;
+        assert_eq!(result.postings.len(), 1);
+        assert_eq!(result.postings[0].account, "Assets:Cash");
+        assert_eq!(result.postings[0].amount.number, 5.into());
+        assert_eq!(result.postings[0].amount.currency, "CHF");
         assert_eq!(result.date, date(2022, 5, 3));
         assert_eq!(result.flag, crate::core::types::TransactionFlag::OK);
 
@@ -208,11 +211,11 @@ mod test {
     #[test]
     fn test_parse_price_and_cost() -> Result<(), String> {
         let success = vec![
-            ("@ 3 USD", Some((3.0, "USD", true)), None),
+            ("@3USD", Some((3.0, "USD", true)), None),
             ("@ 3.5 USD", Some((3.5, "USD", true)), None),
             ("  @@ 50   USD ", Some((50.0, "USD", false)), None),
             (
-                " @ 1 USD {{ 6.3 CHF}}",
+                " @ 1 USD {{ 6.3CHF}}",
                 Some((1.0, "USD", true)),
                 Some((6.3, "CHF", false)),
             ),
@@ -224,7 +227,7 @@ mod test {
             (" {6 CHF}", None, Some((6.0, "CHF", true))),
             (" ", None, None),
             (
-                " @@ 3 USD {{60 CHF}}",
+                " @@ 3USD {{60CHF}}",
                 Some((3.0, "USD", false)),
                 Some((60.0, "CHF", false)),
             ),

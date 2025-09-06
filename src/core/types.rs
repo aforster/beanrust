@@ -2,7 +2,6 @@ pub mod transaction;
 
 pub use transaction::{Cost, CostType, Posting, Price, Transaction, TransactionFlag};
 
-use crate::io::parser::TokenIterator;
 use crate::io::printer::print_transaction;
 use jiff::civil::Date;
 use rust_decimal::Decimal;
@@ -80,19 +79,21 @@ impl TryFrom<&str> for Amount {
     type Error = String;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut it = TokenIterator::new(value);
-        let number_str = it.next().ok_or_else(|| "No number found".to_string())?;
+        let currency_start = value
+            .find(|c: char| c.is_alphabetic())
+            .ok_or(format!("No currency found in '{value}'"))?;
+        let number_str = value[..currency_start].trim();
         let number: Decimal = number_str
             .try_into()
             .map_err(|e| format!("Error parsing number '{number_str}': {e}"))?;
-        let currency = it
-            .next()
-            .ok_or_else(|| "No currency found".to_string())?
-            .to_string();
-        if it.next().is_some() {
-            return Err("Extra tokens found after currency".to_string());
+        let currency = value[currency_start..].trim();
+        if currency.contains(' ') {
+            return Err(format!("Too many parts in amount '{value}'"));
         }
-        Ok(Amount { number, currency })
+        Ok(Amount {
+            number,
+            currency: currency.to_string(),
+        })
     }
 }
 
@@ -139,6 +140,10 @@ mod test {
         );
         assert_eq!(
             Amount::try_from("-0.43 USD").unwrap(),
+            Amount::new(Decimal::new(-43, 2), "USD".to_string())
+        );
+        assert_eq!(
+            Amount::try_from("-0.43USD").unwrap(),
             Amount::new(Decimal::new(-43, 2), "USD".to_string())
         );
         assert!(Amount::try_from("100").is_err());
