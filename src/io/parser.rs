@@ -35,9 +35,6 @@ impl ParsedEntries {
             EntryVariant::Commodity(c) => self.commodity.push(c),
             EntryVariant::PriceEntry(p) => self.price.push(p),
             EntryVariant::Transaction(t) => self.transactions.push(t),
-            _ => {
-                panic!("Unsupported entry type in push")
-            }
         }
     }
     pub fn push_result(&mut self, entry: Result<EntryVariant, Box<error::ParseError>>) {
