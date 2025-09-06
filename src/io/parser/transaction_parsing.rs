@@ -22,22 +22,45 @@ impl TryFrom<&str> for Transaction {
 impl TryFrom<&str> for Posting {
     type Error = String;
     fn try_from(input: &str) -> Result<Self, Self::Error> {
+        // we assume comments were trimmed at call site.
         // Format is <account> <amount> [@|@@ <price>] [{<cost>}|{{<cost>}}]
         let (acc, remain) = input
             .split_once(' ')
             .ok_or(format!("No account in posting: {input}"))?;
         let (amount, remain) = consume_amount(remain)?;
-        let remain = remain.trim();
-        if remain.is_empty() {
-            return Ok(Posting {
-                account: acc.to_string(),
-                amount,
-                price: None,
-                cost: None,
-            });
-        }
+        let (price, cost) = parse_price_and_cost(remain)?;
+        let price = price.map(|p| {
+            if p.per_unit {
+                p.data
+            } else {
+                Price {
+                    amount: p.data.amount / amount.number.abs(),
+                    ..p.data
+                }
+            }
+        });
+        let cost = cost.map(|c| {
+            if c.per_unit {
+                c.data
+            } else {
+                let c = match c.data {
+                    CostType::Known(c) => Some(c),
+                    _ => None,
+                }
+                .unwrap();
+                CostType::Known(Cost {
+                    amount: c.amount / amount.number.abs(),
+                    ..c
+                })
+            }
+        });
 
-        Err("not implemented".to_string())
+        Ok(Posting {
+            account: acc.to_string(),
+            amount,
+            price,
+            cost,
+        })
     }
 }
 
@@ -51,7 +74,7 @@ impl TryFrom<(Date, TransactionFlag, &str)> for Transaction {
         // Parse postings:
         let mut postings: Vec<Posting> = vec![];
         for line in postings_str.lines() {
-            let sanitized = trim_comment_at_end(line);
+            let sanitized = trim_comment_at_end(line).trim();
             if !sanitized.is_empty() {
                 let posting = Posting::try_from(sanitized)
                     .map_err(|e| format!("Unable to parse posting '{line}': {e}"))?;
@@ -112,7 +135,7 @@ struct Parsed<T> {
 
 fn parse_price_and_cost(
     input: &str,
-) -> Result<(Option<Parsed<Price>>, Option<Parsed<Cost>>), String> {
+) -> Result<(Option<Parsed<Price>>, Option<Parsed<CostType>>), String> {
     let input = input.trim();
     if input.is_empty() {
         return Ok((None, None));
@@ -141,17 +164,17 @@ fn parse_price_and_cost(
             });
         }
         if let Some(unit_cost) = capture.name("unitcost") {
-            cost = Some(Parsed::<Cost> {
-                data: Cost {
+            cost = Some(Parsed::<CostType> {
+                data: CostType::Known(Cost {
                     amount: unit_cost.as_str().try_into()?,
-                },
+                }),
                 per_unit: true,
             });
         } else if let Some(tot_cost) = capture.name("totcost") {
-            cost = Some(Parsed::<Cost> {
-                data: Cost {
+            cost = Some(Parsed::<CostType> {
+                data: CostType::Known(Cost {
                     amount: tot_cost.as_str().try_into()?,
-                },
+                }),
                 per_unit: false,
             });
         }
@@ -183,9 +206,14 @@ mod test {
         assert_eq!(result.postings[0].account, "Assets:Cash");
         assert_eq!(result.postings[0].amount.number, 5.into());
         assert_eq!(result.postings[0].amount.currency, "CHF");
+        assert!(result.postings[0].price.is_none());
+        assert!(result.postings[0].cost.is_none());
         assert_eq!(result.postings[1].account, "Assets:Cash2");
         assert_eq!(result.postings[1].amount.number, Decimal::new(51234, 4));
         assert_eq!(result.postings[1].amount.currency, "USD");
+        assert!(result.postings[1].price.is_none());
+        assert!(result.postings[1].cost.is_none());
+
         assert_eq!(result.date, date(2022, 5, 3));
         assert_eq!(result.flag, crate::core::types::TransactionFlag::OK);
 
@@ -195,8 +223,36 @@ mod test {
         assert_eq!(result.postings[0].account, "Assets:Cash");
         assert_eq!(result.postings[0].amount.number, 5.into());
         assert_eq!(result.postings[0].amount.currency, "CHF");
+        assert!(result.postings[0].price.is_none());
+        assert!(result.postings[0].cost.is_none());
         assert_eq!(result.date, date(2022, 5, 3));
         assert_eq!(result.flag, crate::core::types::TransactionFlag::OK);
+
+        let result: Transaction = Transaction::try_from(
+            "2022-05-03 *\n    Assets:Cash 5   CHF {3 USD} ; foobar\n Assets:Cash -6USD @@ 60 CHF   ",
+        )?;
+        assert_eq!(result.postings.len(), 2);
+        assert!(result.postings[0].price.is_none());
+        assert!(result.postings[1].cost.is_none());
+
+        let cost = match &result.postings[0].cost {
+            Some(CostType::Known(c)) => Some(c),
+            _ => None,
+        }
+        .unwrap();
+        let price = result.postings[1].price.as_ref().unwrap();
+        assert_eq!(price.amount, Amount::new(10.into(), "CHF".to_string()));
+        assert_eq!(cost.amount, Amount::new(3.into(), "USD".to_string()));
+
+        assert_eq!(result.date, date(2022, 5, 3));
+        assert_eq!(result.flag, crate::core::types::TransactionFlag::OK);
+
+        let result = Transaction::try_from(
+            "2024-10-05 *
+  Assets:Depot:Cash   -100 CHF
+  Assets:Depot:AMD      1 AMD {100 CHF}  ",
+        );
+        assert!(result.is_ok());
 
         Ok(())
     }
@@ -278,15 +334,20 @@ mod test {
             }
             if let Some(res) = cost {
                 let expected = expected_cost.unwrap();
+                let cost = match &res.data {
+                    CostType::Known(res) => Some(res),
+                    _ => None,
+                }
+                .unwrap();
                 assert_eq!(
-                    res.data.amount.number,
+                    cost.amount.number,
                     Decimal::from_f64(expected.0).unwrap(),
                     "failed to parse {}. Got {:?}",
                     inp,
                     res
                 );
                 assert_eq!(
-                    res.data.amount.currency, expected.1,
+                    cost.amount.currency, expected.1,
                     "failed to parse {}. Got {:?}",
                     inp, res
                 );

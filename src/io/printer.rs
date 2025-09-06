@@ -7,7 +7,7 @@ pub fn print_posting(posting: &Posting) -> String {
     }
     if let Some(cost) = &posting.cost {
         match cost {
-            CostType::Knwon(c) => {
+            CostType::Known(c) => {
                 out.push_str(&format!(" {{ {} }} ", c.amount));
             }
             CostType::Automatic => {
@@ -85,7 +85,7 @@ mod test {
             account: acc.clone(),
             amount: am.clone(),
             price: None,
-            cost: Some(CostType::Knwon(Cost {
+            cost: Some(CostType::Known(Cost {
                 amount: "50 CHF".try_into().unwrap(),
             })),
         };
@@ -103,7 +103,7 @@ mod test {
             price: Some(Price {
                 amount: "75 CHF".try_into().unwrap(),
             }),
-            cost: Some(CostType::Knwon(Cost {
+            cost: Some(CostType::Known(Cost {
                 amount: "50 CHF".try_into().unwrap(),
             })),
         };

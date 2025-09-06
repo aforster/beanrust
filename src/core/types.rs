@@ -40,6 +40,17 @@ impl Amount {
     }
 }
 
+impl std::ops::Div<Decimal> for Amount {
+    type Output = Amount;
+
+    fn div(self, rhs: Decimal) -> Self::Output {
+        Amount {
+            number: self.number / rhs,
+            currency: self.currency,
+        }
+    }
+}
+
 pub struct PriceEntry {
     pub date: Date,
     // Price for currency

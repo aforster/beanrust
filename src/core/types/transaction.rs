@@ -18,7 +18,7 @@ pub struct Cost {
 
 #[derive(Debug)]
 pub enum CostType {
-    Knwon(Cost),
+    Known(Cost),
     Automatic,
 }
 

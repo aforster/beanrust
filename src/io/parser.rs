@@ -94,10 +94,10 @@ fn trim_comment_at_end(data: &str) -> &str {
         }
         if is_comment_char(c) {
             // found a comment char, trim the string here.
-            return &data[..i].trim();
+            return &data[..i];
         }
     }
-    data.trim()
+    data
 }
 
 fn date_and_cmd<'a>(statement: &'a str) -> Result<(Date, &'a str, &'a str), String> {
@@ -154,7 +154,7 @@ impl<'a> StatementParser<'a> {
     pub fn parse_entry(&mut self) -> Result<EntryVariant, Box<ParseError>> {
         let (date, cmd, remain) =
             date_and_cmd(self.statement).map_err(|e| self.new_parse_err(e))?;
-        let remaining = trim_comment_at_end(remain).trim();
+        let remaining = trim_comment_at_end(remain);
         if let Some(flag) = transaction_parsing::parse_flag(cmd) {
             // This is a transaction entry, the rest of the statement is the complete transaction.
             return Ok(EntryVariant::Transaction(
@@ -508,5 +508,39 @@ mod tests {
 
         let res = date_and_cmd("open Assets:Cash");
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_parse_transaction() {
+        let mut entry = StatementParser::new(
+            "2024-10-05 *
+  Assets:Depot:Cash   -100 CHF
+  Assets:Depot:AMD      1 AMD {100 CHF}  ",
+        );
+        let parsed = entry.parse_entry().unwrap();
+        let t = match parsed {
+            EntryVariant::Transaction(o) => Ok(o),
+            _ => Err("Incorrect return"),
+        }
+        .unwrap();
+        assert_eq!(t.date, date(2024, 10, 5));
+        assert_eq!(t.flag, TransactionFlag::OK);
+        assert_eq!(t.postings.len(), 2);
+        assert_eq!(t.postings[0].account, "Assets:Depot:Cash");
+        assert_eq!(t.postings[0].amount.number, Decimal::new(-100, 0));
+        assert_eq!(t.postings[0].amount.currency, "CHF");
+        assert!(t.postings[0].price.is_none());
+        assert!(t.postings[0].cost.is_none());
+        assert_eq!(t.postings[1].account, "Assets:Depot:AMD");
+        assert_eq!(t.postings[1].amount.number, Decimal::new(1, 0));
+        assert_eq!(t.postings[1].amount.currency, "AMD");
+        assert!(t.postings[1].price.is_none());
+        assert!(t.postings[1].cost.is_some());
+        if let Some(CostType::Known(c)) = &t.postings[1].cost {
+            assert_eq!(c.amount.number, Decimal::new(100, 0));
+            assert_eq!(c.amount.currency, "CHF");
+        } else {
+            panic!("Cost not parsed correctly");
+        }
     }
 }
